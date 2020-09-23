@@ -14,6 +14,7 @@ import pprint
 from bs4 import BeautifulSoup as BS
 import html2text
 from subprocess import Popen, PIPE, STDOUT
+import igsn_tools.pmh_igsn
 
 LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -76,16 +77,13 @@ def dumpResponseBody(response):
     return dumpResponseHTML(response)
 
 
-
-@click.command()
+@click.group()
 @click.option(
     "-v", "--verbosity", default="INFO", help="Specify logging level", show_default=True
 )
-@click.argument(
-    "igsn_str",
-    default=None
-)
-def main(verbosity, igsn_str):
+@click.pass_context
+def main(ctx, verbosity):
+    ctx.ensure_object(dict)
     verbosity = verbosity.upper()
     logging.basicConfig(
         level=LOG_LEVELS.get(verbosity, logging.INFO),
@@ -95,13 +93,41 @@ def main(verbosity, igsn_str):
     L = getLogger()
     if verbosity not in LOG_LEVELS.keys():
         L.warning("%s is not a log level, set to INFO", verbosity)
+
+
+@click.argument(
+    "igsn_str",
+    default=None
+)
+@click.option(
+    '-a',
+    '--accept',
+    default='text/xml',
+    help='Accept header value',
+    show_default=True
+)
+@main.command()
+@click.pass_context
+def resolve(ctx, igsn_str, accept):
+    '''
+    Show results of resolving an IGSN
+
+    Args:
+        ctx: The click context passed in from main
+        igsn_str: The IGSN string
+        accept: optional accept header value
+
+    Returns:
+        outputs response information to stdout
+    '''
+    L = getLogger()
     if igsn_str is None:
         L.error("IGSN value is required")
         return 1
     #Trim space and make upper case
     tool = igsn_tools.IGSN(igsn_str)
     headers = {
-        'Accept':'text/xml',
+        'Accept':accept,
     }
     response = tool.resolve(igsn_str, headers=headers)
     nsteps = len(response.history) + 1
@@ -116,6 +142,35 @@ def main(verbosity, igsn_str):
     dumpResponseBody(response)
     return 0
 
+@click.option(
+    '--url',
+    default='http://doidb.wdc-terra.org/igsnoaip/oai',
+    help='OAI-PMH endpoint to enumerate',
+    show_default=True
+)
+@main.command()
+@click.pass_context
+def pmhlist(ctx, url):
+    '''
+    List IGSNs from an OAI-PMH endpoint.
+
+    Args:
+        ctx:
+        url:
+
+    Returns:
+
+    '''
+    service = igsn_tools.pmh_igsn.IGSNs(url)
+    items = service.identifiers()
+    cnt = 0
+    for item in items:
+        print(item)
+        cnt += 1
+        if cnt > 10:
+            break
+    
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(obj={}))
