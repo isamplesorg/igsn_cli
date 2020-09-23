@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "igsn_tools"
+version = "0.1.0"
+description = "Command line client for IGSNs"
+authors = ["datadavev <datadavev@users.noreply.github.com>"]
+license = "MIT"
+
+[tool.poetry.scripts]
+igsn = "igsn_tools.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+requests = "^2.24.0"
+click = "^7.1.2"
+lxml = "^4.5.2"
+extruct = "^0.10.0"
+beautifulsoup4 = "^4.9.1"
+html2text = "^2020.1.16"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"
