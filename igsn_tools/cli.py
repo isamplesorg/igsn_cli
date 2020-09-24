@@ -15,6 +15,8 @@ from bs4 import BeautifulSoup as BS
 import html2text
 from subprocess import Popen, PIPE, STDOUT
 import igsn_tools.pmh_igsn
+import xmltodict
+import sickle
 
 LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -38,6 +40,18 @@ def dumpResponse(response, indent=''):
     print(f"{indent}Headers:")
     for h in response.headers:
         print(f"{indent}  {h:>18} : {response.headers[h]}")
+    links = response.headers.get('Link','').split(",")
+    for link in links:
+        ldata = link.split(';')
+        print(f'{indent}  {ldata[0]}')
+        for ld in ldata[1:]:
+            print(f'{indent}    {ld}')
+    #print(f"{indent}Links:")
+    #for ltype in response.links:
+    #    print(f"{indent}  {ltype}:")
+    #    for lname in response.links[ltype]:
+    #        print(f"{indent}    {lname} : {response.links[ltype][lname]}")
+
 
 def dumpResponseHTML(response):
     meta = extruct.extract(response.text, base_url=response.url)
@@ -148,11 +162,48 @@ def resolve(ctx, igsn_str, accept):
     help='OAI-PMH endpoint to enumerate',
     show_default=True
 )
+@click.option(
+    '-m',
+    '--metadata',
+    help='Metadata type to request',
+    default='oai_dc'
+)
+@click.option(
+    '-x',
+    '--max_records',
+    help='Maximum number of records to return',
+    default=50
+)
+@click.option(
+    '-s',
+    '--set_spec',
+    help='Set spec to use in request',
+    default=None
+)
+@click.option(
+    '--list_sets',
+    help='List sets available on service',
+    default=False,
+    is_flag=True
+)
+@click.option(
+    '--raw',
+    help='Show raw xml for each record',
+    default=False,
+    is_flag=True
+)
 @main.command()
 @click.pass_context
-def pmhlist(ctx, url):
+def pmhlist(ctx, url, metadata, max_records, set_spec, list_sets, raw):
     '''
     List IGSNs from an OAI-PMH endpoint.
+
+    Endpoints include:
+
+    * http://doidb.wdc-terra.org/igsnaaoaip/oai (default)
+    * http://pid.geoscience.gov.au/sample/oai
+    * https://handle.ands.org.au/igsn/api/service/30/oai
+    * https://igsn.csiro.au/csiro/service/oai
 
     Args:
         ctx:
@@ -161,15 +212,49 @@ def pmhlist(ctx, url):
     Returns:
 
     '''
+    L = getLogger()
     service = igsn_tools.pmh_igsn.IGSNs(url)
-    items = service.identifiers()
+    if list_sets:
+        items = service.ListSets()
+        cnt = 0
+        for item in items:
+            entry = xmltodict.parse(item.raw)
+            print(f"{cnt:03} {entry['set']['setSpec']:>24} : {entry['set']['setName']}")
+            cnt += 1
+            if cnt >= max_records:
+                print("More available...")
+                break
+        return
+    try:
+        items = service.identifiers(metadata=metadata, set_spec=set_spec)
+    except sickle.oaiexceptions.NoRecordsMatch as e:
+        L.error(e)
+        return
     cnt = 0
+    namespaces = {
+        'http://www.openarchives.org/OAI/2.0/':'oai',
+        'http://www.openarchives.org/OAI/2.0/oai_dc/':'oai_dc',
+        'http://purl.org/dc/elements/1.1/':'dc',
+    }
     for item in items:
-        print(item)
+        print(f"{cnt:06}")
+        if raw:
+          xml = ET.fromstring(item.raw)
+          print(ET.tostring(xml, pretty_print=True).decode())
+        else:
+          jitem = xmltodict.parse(item.raw, process_namespaces=True, namespaces=namespaces)
+          print(json.dumps(jitem, indent=2))
+          rec = jitem['oai:record']
+          igsn = igsn_tools.normalizeIGSN(rec['oai:metadata']['oai_dc:dc']['dc:identifier'][0])
+          print(f"   IGSN: {igsn}")
+          print(f"   Date: {rec['oai:header']['oai:datestamp']}")
+          print(f"    Set: {', '.join(rec['oai:header']['oai:setSpec'])}")
+          print(f"Creator: {rec['oai:metadata']['oai_dc:dc']['dc:creator']}")
         cnt += 1
-        if cnt > 10:
+        if cnt >= max_records:
+            print("More available...")
             break
-    
+
 
 
 if __name__ == "__main__":

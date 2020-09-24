@@ -6,7 +6,12 @@ import sickle
 
 class IGSNs(sickle.Sickle):
 
-    def identifiers(self):
-        return self.ListRecords(ignore_deleted=False, metadataPrefix='oai_dc')
+    def identifiers(self, metadata='oai_dc', set_spec=None):
+        params = {
+            'metadataPrefix':metadata,
+        }
+        if set_spec is not None:
+            params['set'] = set_spec
+        return self.ListRecords(ignore_deleted=True, **params)
 
 
