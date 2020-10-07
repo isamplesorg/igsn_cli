@@ -7,6 +7,7 @@ license = "MIT"
 
 [tool.poetry.scripts]
 igsn = "igsn_tools.cli:main"
+igsn-harvest = "igsn_tools.harvest:main"
 
 [tool.poetry.dependencies]
 python = "^3.8"
@@ -18,6 +19,11 @@ beautifulsoup4 = "^4.9.1"
 html2text = "^2020.1.16"
 sickle = "^0.7.0"
 xmltodict = "^0.12.0"
+dateparser = "^0.7.6"
+sqlalchemy = "^1.3.19"
+astropy = "^4.0.1"
+numpy = "^1.19.2"
+igsn-lib = {path = "../igsn_lib"}
 
 [tool.poetry.dev-dependencies]
 
