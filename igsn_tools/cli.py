@@ -41,7 +41,7 @@ def dumpResponse(response, indent=""):
     print(f"{indent}Encoding: {response.encoding}")
     print(f"{indent}Headers:")
     for h in response.headers:
-        print(f"{indent}  {h:>18} : {response.headers[h]}")
+        print(f"{indent} <{h:>18} : {response.headers[h]}")
     links = response.headers.get("Link", "").split(",")
     for link in links:
         ldata = link.split(";")
@@ -53,6 +53,8 @@ def dumpResponse(response, indent=""):
     #    print(f"{indent}  {ltype}:")
     #    for lname in response.links[ltype]:
     #        print(f"{indent}    {lname} : {response.links[ltype][lname]}")
+    for h in response.request.headers:
+        print(f"{indent} >{h:>18} : {response.request.headers[h]}")
 
 
 def dumpResponseHTML(response):
@@ -175,38 +177,33 @@ def resolve(ctx, igsn_str, accept, url_only, show_steps, use_n2t):
             "Accept": accept,
         }
     if use_n2t:
-        if accept is None:
-            L.warning("N2T does not support content negotiation. Changing default Accept header to */*")
-            headers = {
-                "Accept": "*/*",
-            }
         identifier = igsn_str
         igsn_val = igsn_lib.normalize(igsn_str)
         if igsn_val is not None:
             identifier = f"IGSN:{igsn_val}"
-        response = igsn_lib.resolveN2T(identifier, headers=headers)
+        responses = igsn_lib.resolveN2T(identifier, headers=headers)
     else:
         igsn_val = igsn_lib.normalize(igsn_str)
         L.info("Normalized IGSN = %s", igsn_val)
         if igsn_val is None:
             L.error("Provided identifier not recogized as an IGSN")
             return 1
-        response = igsn_lib.resolve(igsn_val, headers=headers)
+        responses = igsn_lib.resolve(igsn_val, include_body=not url_only, headers=headers)
     # Trim space and make upper case
     if show_steps:
-        nsteps = len(response.history) + 1
+        nsteps = len(responses)
         print("History:")
         cntr = 1
-        for r in response.history:
+        for r in responses:
             print(f"Step {cntr}/{nsteps}:")
             dumpResponse(r, indent="  ")
             cntr += 1
-        print(f"Step {cntr}/{nsteps}:")
-        dumpResponse(response, indent="  ")
+        #print(f"Step {cntr}/{nsteps}:")
+        #dumpResponse(response, indent="  ")
     if url_only:
-        print(f"{response.url}")
+        print(f"{responses[-1].url}")
         return 0
-    dumpResponseBody(response)
+    dumpResponseBody(responses[-1])
     return 0
 
 

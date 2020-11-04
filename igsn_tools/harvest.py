@@ -6,11 +6,13 @@ Supported by NSF Award 2004815
 import sys
 import logging
 import datetime
+import json
 import click
 import dateparser
 import igsn_lib.models
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import sqlalchemy.orm.exc
 
 LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -45,7 +47,7 @@ def getSession(engine):
 @click.option(
     "-v",
     "--verbosity",
-    default="WARNING",
+    default="INFO",
     help="Specify logging level",
     show_default=True,
 )
@@ -56,8 +58,15 @@ def getSession(engine):
     help="Database connection string",
     show_default=True,
 )
+@click.option(
+    "-F",
+    "--format",
+    default="json",
+    help="Ouput format",
+    show_default=True
+)
 @click.pass_context
-def main(ctx, verbosity, db_connect):
+def main(ctx, verbosity, db_connect, format):
     ctx.ensure_object(dict)
     verbosity = verbosity.upper()
     logging.basicConfig(
@@ -69,15 +78,22 @@ def main(ctx, verbosity, db_connect):
     if verbosity not in LOG_LEVELS.keys():
         L.warning("%s is not a log level, set to INFO", verbosity)
     ctx.obj["engine"] = getEngine(db_connect)
+    ctx.obj["format"] = format
 
 
 @main.command()
 @click.pass_context
-def lists_services(ctx):
+def services(ctx):
     session = getSession(ctx.obj["engine"])
+    res = []
     for service in session.query(igsn_lib.models.Service).all():
-        print(service)
+        if ctx.obj['format'] == 'json':
+            res.append(service.asJsonDict())
+        else:
+            print(service)
     session.close()
+    if ctx.obj['format'] == 'json':
+        print(json.dumps(res, indent=2))
 
 
 @main.command()
@@ -92,18 +108,36 @@ def add_service(ctx, url):
 
 @main.command()
 @click.pass_context
-@click.option("-i", "--service-id", help="ID of service to use", default=1)
-def list_service_sets(ctx, service_id):
+@click.argument("service-id", default=1)
+@click.option(
+    "-c",
+    "--counts",
+    help="Get record counts per set",
+    default=False,
+    show_default=True,
+    is_flag=True,
+)
+def sets(ctx, service_id, counts):
+    L = getLogger()
     session = getSession(ctx.obj["engine"])
-    for service in (
-        session.query(igsn_lib.models.Service)
-        .filter(igsn_lib.models.Service.id == service_id)
-        .all()
-    ):
-        print(f"{service.url}")
-        sets = service.listSets()
-        for s in sets:
-            print(f"  {s.setSpec} : {s.setName}")
+    try:
+        service = (
+            session.query(igsn_lib.models.Service)
+            .filter(igsn_lib.models.Service.id == service_id)
+            .one()
+        )
+        L.info("Service: %s", service.url)
+        sets = service.listSets(get_counts=counts)
+        if ctx.obj['format'] == 'json':
+            print(json.dumps(sets, indent=2))
+        else:
+            for s in sets:
+                if counts:
+                    print(f"{s['setSpec']}: {s['count']}: {s['setName']}")
+                else:
+                    print(f"{s['setSpec']}: {s['setName']}")
+    except sqlalchemy.orm.exc.NoResultFound as e:
+        L.error("No service found with ID=%s", service_id)
     session.close()
 
 
@@ -121,38 +155,73 @@ def add_job(ctx, service_id, from_date, to_date, set_spec):
     dto_date = None
     if to_date is not None:
         dto_date = dateparser.parse(to_date, settings={"TIMEZONE": "+0000"})
-    if dto_date < dfrom_date:
-        L.error("from-date must be older than to-date")
-        return 1
+    if dto_date is not None and dfrom_date is not None:
+        if dto_date < dfrom_date:
+            L.error("from-date must be older than to-date")
+            return 1
     session = getSession(ctx.obj["engine"])
-    service = (
-        session.query(igsn_lib.models.Service)
-        .filter(igsn_lib.models.Service.id == service_id)
-        .one()
-    )
-    service.createJob(
-        session=session,
-        ignore_deleted=False,
-        metadata_prefix="igsn",
-        setspec=set_spec,
-        tfrom=dfrom_date,
-        tuntil=dto_date
-    )
+    try:
+        service = (
+            session.query(igsn_lib.models.Service)
+            .filter(igsn_lib.models.Service.id == service_id)
+            .one()
+        )
+        job = service.createJob(
+            session=session,
+            ignore_deleted=False,
+            metadata_prefix="igsn",
+            setspec=set_spec,
+            tfrom=dfrom_date,
+            tuntil=dto_date,
+        )
+        print(job)
+    except sqlalchemy.orm.exc.NoResultFound as e:
+        L.error("No service found with ID=%s", service_id)
     session.close()
 
-@click.option("-i", "--service-id", help="ID of service for new job", default=1)
+
+@click.argument("service-id", default=1)
 @main.command()
 @click.pass_context
-def list_jobs(ctx, service_id):
+def jobs(ctx, service_id):
     L = getLogger()
     session = getSession(ctx.obj["engine"])
-    service = (
-        session.query(igsn_lib.models.Service)
-        .filter(igsn_lib.models.Service.id == service_id)
-        .one()
-    )
-    for job in service.jobs:
-        print(job)
+    res = []
+    try:
+        service = (
+            session.query(igsn_lib.models.Service)
+            .filter(igsn_lib.models.Service.id == service_id)
+            .one()
+        )
+        for job in service.jobs:
+            if ctx.obj['format'] == 'json':
+                res.append(job.asDict())
+            else:
+                print(job)
+    except sqlalchemy.orm.exc.NoResultFound as e:
+        L.error("No service found with ID=%s", service_id)
+    session.close()
+    if ctx.obj['format'] == 'json':
+        print(json.dumps(res, indent=2))
+
+
+@click.argument("job-id", default=0)
+@main.command()
+@click.pass_context
+def delete_job(ctx, job_id):
+    L = getLogger()
+    session = getSession(ctx.obj["engine"])
+    try:
+        job = (
+            session.query(igsn_lib.models.Job)
+            .filter(igsn_lib.models.Job.id == job_id)
+            .one()
+        )
+        session.delete(job)
+        session.commit()
+        L.info("Deleted job id=%s", job.id)
+    except sqlalchemy.orm.exc.NoResultFound as e:
+        L.error("No job found with ID=%s", job_id)
     session.close()
 
 
@@ -166,12 +235,38 @@ def igsn_callback(record, igsn):
 def run_job(ctx, job_id):
     L = getLogger()
     session = getSession(ctx.obj["engine"])
-    job = (
-        session.query(igsn_lib.models.Job)
-        .filter(igsn_lib.models.Job.id == job_id)
-        .one()
-    )
-    job.execute(session, callback=igsn_callback)
+    try:
+        job = (
+            session.query(igsn_lib.models.Job)
+            .filter(igsn_lib.models.Job.id == job_id)
+            .one()
+        )
+        job.execute(session, callback=igsn_callback)
+    except sqlalchemy.orm.exc.NoResultFound as e:
+        L.error("No job found with ID=%s", job_id)
     session.close()
 
+@click.argument("service-id", default=1)
+@click.option("-s", "--setspec", default=None, help="Setspec name (compared using LIKE)")
+@main.command()
+@click.pass_context
+def last_record(ctx, service_id, setspec):
+    L = getLogger()
+    session = getSession(ctx.obj["engine"])
+    res = {}
+    try:
+        service = (
+            session.query(igsn_lib.models.Service)
+            .filter(igsn_lib.models.Service.id == service_id)
+            .one()
+        )
+        last_record = service.mostRecentIdentifierRetrieved(session, set_spec=setspec)
+        res = last_record.asJsonDict()
+    except sqlalchemy.orm.exc.NoResultFound as e:
+        L.error("No service found with ID=%s", service_id)
+    except AttributeError as e:
+        L.error("No matching record for service_id=%s and set_spec=%s", service_id, setspec)
+    session.close()
+    if ctx.obj['format'] == 'json':
+        print(json.dumps(res, indent=2))
 
